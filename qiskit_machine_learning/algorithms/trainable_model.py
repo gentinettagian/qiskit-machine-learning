@@ -1,6 +1,6 @@
 # This code is part of Qiskit.
 #
-# (C) Copyright IBM 2021, 2022.
+# (C) Copyright IBM 2021.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -46,6 +46,7 @@ class TrainableModel:
         warm_start: bool = False,
         initial_point: np.ndarray = None,
         callback: Optional[Callable[[np.ndarray, float], None]] = None,
+        batch_size: Optional[int] = None
     ):
         """
         Args:
@@ -103,6 +104,7 @@ class TrainableModel:
         self._fit_result = None
         self._initial_point = initial_point
         self._callback = callback
+        self._batch_size = batch_size
 
     @property
     def neural_network(self):
@@ -201,14 +203,14 @@ class TrainableModel:
             An array as an initial point
         """
         if self._warm_start and self._fit_result is not None:
-            self._initial_point = self._fit_result.x
+            self._initial_point = self._fit_result[0]
         elif self._initial_point is None:
             self._initial_point = algorithm_globals.random.random(self._neural_network.num_weights)
         return self._initial_point
 
     def _get_objective(
         self,
-        function: ObjectiveFunction,
+        function: ObjectiveFunction
     ) -> Callable:
         """
         Wraps the given `ObjectiveFunction` to add callback calls, if `callback` is not None, along
@@ -223,8 +225,8 @@ class TrainableModel:
         if self._callback is None:
             return function.objective
 
-        def objective(objective_weights):
-            objective_value = function.objective(objective_weights)
+        def objective(objective_weights, seed = None):
+            objective_value = function.objective(objective_weights, seed)
             self._callback(objective_weights, objective_value)
             return objective_value
 

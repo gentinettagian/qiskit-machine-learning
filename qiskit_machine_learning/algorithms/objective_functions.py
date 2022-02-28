@@ -32,6 +32,8 @@ except ImportError:
 from qiskit_machine_learning.neural_networks import NeuralNetwork
 from qiskit_machine_learning.utils.loss_functions import Loss
 
+from qiskit.utils import algorithm_globals
+
 
 class ObjectiveFunction:
     """An abstract objective function. Provides methods for computing objective value and
@@ -39,7 +41,7 @@ class ObjectiveFunction:
 
     # pylint: disable=invalid-name
     def __init__(
-        self, X: np.ndarray, y: np.ndarray, neural_network: NeuralNetwork, loss: Loss
+        self, X: np.ndarray, y: np.ndarray, neural_network: NeuralNetwork, loss: Loss, batch_size: int = None
     ) -> None:
         """
         Args:
@@ -56,13 +58,20 @@ class ObjectiveFunction:
         self._loss = loss
         self._last_forward_weights: Optional[np.ndarray] = None
         self._last_forward: Optional[Union[np.ndarray, SparseArray]] = None
+        if batch_size is None:
+            self._is_stochastic = False
+        else:
+            self._is_stochastic = True
+            self._batch_size = batch_size
+
 
     @abstractmethod
-    def objective(self, weights: np.ndarray) -> float:
+    def objective(self, weights: np.ndarray, seed: int = None) -> float:
         """Computes the value of this objective function given weights.
 
         Args:
             weights: an array of weights to be used in the objective function.
+            seed: random seed used to sample batch, if using SGD
 
         Returns:
             Value of the function.
@@ -75,19 +84,23 @@ class ObjectiveFunction:
 
         Args:
             weights: an array of weights to be used in the objective function.
+            seed: random seed used to sample batch, if using SGD
 
         Returns:
             Gradients of the function.
         """
+        if self._is_stochastic:
+            print("Warning: Gradient method has not been adapted to stochastic gradient descent.")
         raise NotImplementedError
 
-    def _neural_network_forward(self, weights: np.ndarray) -> Union[np.ndarray, SparseArray]:
+    def _neural_network_forward(self, weights: np.ndarray, seed: int = None) -> Union[np.ndarray, SparseArray]:
         """
         Computes and caches the results of the forward pass. Cached values may be re-used in
         gradient computation.
 
         Args:
             weights: an array of weights to be used in the forward pass.
+            seed: random seed used to sample batch, if using SGD
 
         Returns:
             The result of the neural network.
@@ -96,8 +109,14 @@ class ObjectiveFunction:
         if self._last_forward_weights is None or (
             not np.all(np.isclose(weights, self._last_forward_weights))
         ):
+            if self._is_stochastic:
+                rng = np.random.default_rng(seed)
+                samples = rng.integers(0, len(self._X), self._batch_size)
+                X = self._X[samples]
+            else:
+                X = self._X
             # compute forward and cache the results for re-use in backward
-            self._last_forward = self._neural_network.forward(self._X, weights)
+            self._last_forward = self._neural_network.forward(X, weights)
             # a copy avoids keeping a reference to the same array, so we are sure we have
             # different arrays on the next iteration.
             self._last_forward_weights = np.copy(weights)
@@ -108,10 +127,17 @@ class BinaryObjectiveFunction(ObjectiveFunction):
     """An objective function for binary representation of the output,
     e.g. classes of ``-1`` and ``+1``."""
 
-    def objective(self, weights: np.ndarray) -> float:
+    def objective(self, weights: np.ndarray, seed: int = None) -> float:
         # predict is of shape (N, 1), where N is a number of samples
-        predict = self._neural_network_forward(weights)
-        target = np.array(self._y).reshape(predict.shape)
+        predict = self._neural_network_forward(weights, seed)
+        if self._is_stochastic:
+            rng = np.random.default_rng(seed)
+            samples = rng.integers(0, len(self._X), self._batch_size)
+            y = self._y[samples]
+        else:
+            y = self._y
+
+        target = np.array(y).reshape(predict.shape)
         # float(...) is for mypy compliance
         return float(np.sum(self._loss(predict, target)))
 
@@ -145,19 +171,26 @@ class MultiClassObjectiveFunction(ObjectiveFunction):
     e.g. classes of ``0``, ``1``, ``2``, etc.
     """
 
-    def objective(self, weights: np.ndarray) -> float:
+    def objective(self, weights: np.ndarray, seed: int = None) -> float:
         # probabilities is of shape (N, num_outputs)
-        probs = self._neural_network_forward(weights)
+        probs = self._neural_network_forward(weights, seed)
 
         num_outputs = self._neural_network.output_shape[0]
         val = 0.0
-        num_samples = self._X.shape[0]
+        if self._is_stochastic:
+            num_samples = self._batch_size
+            rng = np.random.default_rng(seed)
+            samples = rng.integers(0, len(self._X), self._batch_size)
+            y = self._y[samples]
+        else:
+            num_samples = self._X.shape[0]
+            y = self._y
         for i in range(num_outputs):
             # for each output we compute a dot product of probabilities of this output and a loss
             # vector.
             # loss vector is a loss of a particular output value(value of i) versus true labels.
             # we do this across all samples.
-            val += probs[:, i] @ self._loss(np.full(num_samples, i), self._y)
+            val += probs[:, i] @ self._loss(np.full(num_samples, i), y)
 
         return val
 
@@ -182,11 +215,17 @@ class OneHotObjectiveFunction(ObjectiveFunction):
     e.g. classes like ``[1, 0, 0]``, ``[0, 1, 0]``, ``[0, 0, 1]``.
     """
 
-    def objective(self, weights: np.ndarray) -> float:
+    def objective(self, weights: np.ndarray, seed: int = None) -> float:
         # probabilities is of shape (N, num_outputs)
-        probs = self._neural_network_forward(weights)
+        probs = self._neural_network_forward(weights, seed)
+        if self._is_stochastic:
+            rng = np.random.default_rng(seed)
+            samples = rng.integers(0, len(self._X), self._batch_size)
+            y = self._y[samples]
+        else:
+            y = self._y
         # float(...) is for mypy compliance
-        return float(np.sum(self._loss(probs, self._y)))
+        return float(np.sum(self._loss(probs, y)))
 
     def gradient(self, weights: np.ndarray) -> np.ndarray:
         # predict is of shape (N, num_outputs)

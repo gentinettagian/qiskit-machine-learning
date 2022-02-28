@@ -1,6 +1,6 @@
 # This code is part of Qiskit.
 #
-# (C) Copyright IBM 2021, 2022.
+# (C) Copyright IBM 2021.
 #
 # This code is licensed under the Apache License, Version 2.0. You may
 # obtain a copy of this license in the LICENSE.txt file in the root directory
@@ -9,7 +9,7 @@
 # Any modifications or derivative works of this code must retain this
 # copyright notice, and modified files need to carry a notice indicating
 # that they have been altered from the originals.
-"""An implementation of variational quantum classifier."""
+"""An implementation of quantum neural network classifier."""
 
 from typing import Union, Optional, Callable, cast
 import numpy as np
@@ -27,21 +27,12 @@ from .neural_network_classifier import NeuralNetworkClassifier
 
 
 class VQC(NeuralNetworkClassifier):
-    """Variational quantum classifier.
-
-    The variational quantum classifier is a variational algorithm where the
-    measured expectation value is interpreted as the output of a classifier.
-
-    Only supports one-hot encoded labels;
-    e.g., data like ``[1, 0, 0]``, ``[0, 1, 0]``, ``[0, 0, 1]``.
-
-    Multi-label classification is not supported;
-    e.g., data like ``[1, 1, 0]``, ``[0, 1, 1]``, ``[1, 0, 1]``, ``[1, 1, 1]``.
-    """
+    """Quantum neural network classifier."""
 
     def __init__(
         self,
         num_qubits: int = None,
+        reps: int = 3,
         feature_map: QuantumCircuit = None,
         ansatz: QuantumCircuit = None,
         loss: Union[str, Loss] = "cross_entropy",
@@ -50,6 +41,7 @@ class VQC(NeuralNetworkClassifier):
         quantum_instance: QuantumInstance = None,
         initial_point: np.ndarray = None,
         callback: Optional[Callable[[np.ndarray, float], None]] = None,
+        batch_size: Optional[int] = None
     ) -> None:
         """
         Args:
@@ -93,7 +85,7 @@ class VQC(NeuralNetworkClassifier):
                     raise QiskitMachineLearningError("Incompatible num_qubits and ansatz!")
                 ansatz_ = ansatz
             else:
-                ansatz_ = RealAmplitudes(num_qubits)
+                ansatz_ = RealAmplitudes(num_qubits,reps=reps)
         else:
             if feature_map and ansatz:
                 if feature_map.num_qubits != ansatz.num_qubits:
@@ -104,7 +96,7 @@ class VQC(NeuralNetworkClassifier):
             elif feature_map:
                 num_qubits_ = feature_map.num_qubits
                 feature_map_ = feature_map
-                ansatz_ = RealAmplitudes(num_qubits_)
+                ansatz_ = RealAmplitudes(num_qubits_,reps=reps)
             elif ansatz:
                 num_qubits_ = ansatz.num_qubits
                 ansatz_ = ansatz
@@ -137,6 +129,7 @@ class VQC(NeuralNetworkClassifier):
             warm_start=warm_start,
             initial_point=initial_point,
             callback=callback,
+            batch_size=batch_size
         )
 
     @property
@@ -165,19 +158,19 @@ class VQC(NeuralNetworkClassifier):
 
         Args:
             X: The input data.
-            y: The target values. Required to be one-hot encoded.
+            y: The target values.
 
         Returns:
             self: returns a trained classifier.
         """
-        num_classes = y.shape[-1]
+        num_classes = len(np.unique(y, axis=0))
         cast(CircuitQNN, self._neural_network).set_interpret(
             self._get_interpret(num_classes), num_classes
         )
         return super().fit(X, y)
 
-    def _get_interpret(self, num_classes: int):
-        def parity(x: int, num_classes: int = num_classes) -> int:
-            return x % num_classes
+    def _get_interpret(self, num_classes):
+        def parity(x, num_classes=num_classes):
+            return f"{x:b}".count("1") % num_classes
 
         return parity

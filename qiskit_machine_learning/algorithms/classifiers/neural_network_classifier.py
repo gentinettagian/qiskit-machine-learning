@@ -45,6 +45,7 @@ class NeuralNetworkClassifier(TrainableModel, ClassifierMixin):
         warm_start: bool = False,
         initial_point: np.ndarray = None,
         callback: Optional[Callable[[np.ndarray, float], None]] = None,
+        batch_size: Optional[int] = None
     ):
         """
         Args:
@@ -80,7 +81,7 @@ class NeuralNetworkClassifier(TrainableModel, ClassifierMixin):
         Raises:
             QiskitMachineLearningError: unknown loss, invalid neural network
         """
-        super().__init__(neural_network, loss, optimizer, warm_start, initial_point, callback)
+        super().__init__(neural_network, loss, optimizer, warm_start, initial_point, callback, batch_size)
         self._one_hot = one_hot
         # encodes the target data if categorical
         self._target_encoder = OneHotEncoder(sparse=False) if one_hot else LabelEncoder()
@@ -95,12 +96,12 @@ class NeuralNetworkClassifier(TrainableModel, ClassifierMixin):
                 raise QiskitMachineLearningError(
                     f"Current settings only applicable to binary classification! Got labels: {y}"
                 )
-            function = BinaryObjectiveFunction(X, y, self._neural_network, self._loss)
+            function = BinaryObjectiveFunction(X, y, self._neural_network, self._loss, self._batch_size)
         else:
             if self._one_hot:
-                function = OneHotObjectiveFunction(X, y, self._neural_network, self._loss)
+                function = OneHotObjectiveFunction(X, y, self._neural_network, self._loss, self._batch_size)
             else:
-                function = MultiClassObjectiveFunction(X, y, self._neural_network, self._loss)
+                function = MultiClassObjectiveFunction(X, y, self._neural_network, self._loss, self._batch_size)
 
         objective = self._get_objective(function)
 
